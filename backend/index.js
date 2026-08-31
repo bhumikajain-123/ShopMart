@@ -18,8 +18,8 @@ app.get("/",(req,res)=>{
 app.use("/api/auth",require("./route/authRoutes"));
 app.use("/api/products",require("./route/productRoutes"));
 app.use("/api/orders",require("./route/orderRoutes"));
-// app.use("/api/payment",require("./route/paymentRoutes"));
-// app.use("/api/analytics",require("./route/analyticsRoutes"));
+app.use("/api/payment",require("./route/paymentRoutes"));
+app.use("/api/analytics",require("./route/analyticsRoutes"));
 
 const PORT = process.env.PORT;
 
