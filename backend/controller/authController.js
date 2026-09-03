@@ -1,5 +1,6 @@
 const User = require("../model/User");
 const bcrypt = require("bcrypt");
+const Otp = require("../model/Otp");
 const jwt = require("jsonwebtoken");
 const sendEmail = require("../utils/sendEmail");
 
@@ -13,54 +14,125 @@ const registerUser = async (req, res) => {
   try {
     const { name, email, password } = req.body;
 
-    // Check if user already exists
+    // Check if already registered
     const existingUser = await User.findOne({ email });
 
     if (existingUser) {
       return res.status(400).json({
         success: false,
-        message: "User already exists"
+        message: "User already registered"
       });
     }
 
     // Hash password
-    const salt = await  bcrypt.genSalt(10);
-    const hashedPassword = await bcrypt.hash(password,salt);
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(password, salt);
 
-    // Create user
-    const user = await User.create({
+    // Generate OTP
+    const otp = Math.floor(
+      100000 + Math.random() * 900000
+    ).toString();
+
+    // OTP expires in 5 minutes
+    const expiresAt = new Date(
+      Date.now() + 5 * 60 * 1000
+    );
+
+    // Remove previous OTP for this email
+    await Otp.deleteMany({ email });
+
+    // Temporarily store registration data
+    await Otp.create({
       name,
       email,
-      password: hashedPassword
+      password: hashedPassword,
+      otp,
+      expiresAt
     });
-if(user){
-  const otp = Math.floor(100000+Math.random()*900000).toString();
-  const message = `
-  Welcome to ShopNest ,${name}!
-  Your otp for ShopNest registeration is: ${otp}`
 
-  await sendEmail(email,`Welcome to ShopNest - Your otp for Registration`,message);
+    // Send OTP
+    const message = `
+      Welcome to ShopNest, ${name}!
 
-    res.status(201).json({
+      Your OTP for registration is: ${otp}
+
+      This OTP is valid for 5 minutes.
+    `;
+
+    await sendEmail(
+      email,
+      "ShopNest - Verify Your Email",
+      message
+    );
+
+    return res.status(200).json({
       success: true,
-      message: "User registered successfully",
+      message: "OTP sent to your email",
+      email
+    });
+
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+};
+
+
+const verifyEmail = async (req, res) => {
+  try {
+    const { email, otp } = req.body;
+
+    const otpData = await Otp.findOne({
+      email,
+      otp
+    });
+
+    if (!otpData) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid OTP"
+      });
+    }
+
+    if (otpData.expiresAt < new Date()) {
+      await Otp.deleteOne({ _id: otpData._id });
+
+      return res.status(400).json({
+        success: false,
+        message: "OTP expired"
+      });
+    }
+
+    // NOW create the actual user
+    const user = await User.create({
+      name: otpData.name,
+      email: otpData.email,
+      password: otpData.password,
+      verified: true
+    });
+
+    // Remove temporary OTP data
+    await Otp.deleteOne({
+      _id: otpData._id
+    });
+
+    return res.status(201).json({
+      success: true,
+      message: "Email verified and registration completed",
       user: {
         id: user._id,
         name: user.name,
         email: user.email,
-        role : user.role,
-        token : generateToken(user._id)
-      
+        role: user.role
       }
     });
 
-  } else{
-    return res.json({message })
-  }
-}catch (err) {
-    res.status(500).json({
+  } catch (error) {
+    return res.status(500).json({
       success: false,
-      message: err.message
+      message: error.message
     });
   }
 };
@@ -120,6 +192,64 @@ const getUser = async (req,res)=>{
   }
 }
 
+const resendOtp = async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    // Find existing temporary registration
+    const otpData = await Otp.findOne({ email });
+
+    if (!otpData) {
+      return res.status(404).json({
+        success: false,
+        message: "Registration session not found. Please register again."
+      });
+    }
+
+    // Generate new OTP
+    const newOtp = Math.floor(
+      100000 + Math.random() * 900000
+    ).toString();
+
+    // New expiry: 5 minutes
+    const newExpiresAt = new Date(
+      Date.now() + 5 * 60 * 1000
+    );
+
+    // Update OTP
+    otpData.otp = newOtp;
+    otpData.expiresAt = newExpiresAt;
+
+    await otpData.save();
+
+    // Send new OTP
+    const message = `
+      Your new ShopNest verification OTP is:
+
+      ${newOtp}
+
+      This OTP is valid for 5 minutes.
+    `;
+
+    await sendEmail(
+      email,
+      "ShopNest - New Verification OTP",
+      message
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: "New OTP sent successfully"
+    });
+
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+};
+
 // Logout
 // const logoutUser = async (req, res) => {
 //   try {
@@ -139,5 +269,5 @@ const getUser = async (req,res)=>{
 module.exports = {
   registerUser,
   loginUser,
-getUser
+getUser,verifyEmail,resendOtp 
 };
